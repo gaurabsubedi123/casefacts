@@ -149,6 +149,8 @@ function watchJob() {
   const bar = $("#job-bar");
   const stream = new EventSource("/api/job/stream");
   state.stream = stream;
+  // A previous job hid it on finishing; this one can be stopped.
+  $("#job-stop").hidden = false;
 
   stream.onmessage = (message) => {
     const event = JSON.parse(message.data);

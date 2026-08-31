@@ -277,12 +277,15 @@ WSL2, RTX 4070 Laptop (8 GB VRAM), on the 358-page GEICO claim file:
 | Embedding throughput | ~90 chunks/second |
 | One question, hybrid search | **6–13 seconds** |
 | One question, whole small document | ~7 seconds |
-| Chronology sweep | **~1.3 seconds per page** with a date; pages without one are free |
+| Chronology sweep, all 358 pages | **15 minutes** — 246 pages read at 3.7s each, 112 skipped for having no date and costing nothing |
+| What the sweep produced | 269 events → 230 rows after collapsing repeats, spanning 2018-07-06 to 2019-09-17, and 2 treatment gaps (34 and 196 days) |
+| What the checker caught there | 223 events verified; 32 carried a date not on their page and 14 a quote that was not; all 46 held back from the timeline |
 | Duplicate detection | 7 of 9 files caught as copies — embedded once, not four times |
-| Test suite | 94 tests, ~2 seconds, no model needed |
+| Test suite | 98 tests, ~3 seconds, no model needed |
 
-A 2,000-page file is therefore roughly a minute to index and half an hour to
-sweep for a chronology, once.
+A 2,000-page file is therefore roughly a minute to index and an hour and a
+half to sweep for a chronology, once — and it is resumable, so that hour can be
+taken in pieces.
 
 ---
 
