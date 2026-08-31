@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "casefacts"
+version = "0.1.0"
+description = "Ask questions of an OCR'd case file and get answers with a page citation on every sentence, from models running on this machine."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# As small as ocrtool's, and for the same reason: this reads other people's
+# medical records, so every dependency is a thing that could go wrong on
+# documents that matter.
+#
+# There is no vector-database package here on purpose. SQLite ships with
+# Python and its FTS5 module does the keyword half; the vector half is a
+# numpy dot product over a matrix that fits in memory at the sizes a single
+# case file reaches. See index.py for the arithmetic.
+#
+# No ollama client library either — it is four HTTP endpoints, and urllib
+# already speaks HTTP.
+dependencies = [
+    "numpy>=1.26",
+    "Flask>=3.0,<4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+casefacts = "casefacts.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["casefacts"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

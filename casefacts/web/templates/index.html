@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block topmeta %}
+  <span id="topstats">{{ stats.documents }} documents · {{ stats.pages }} pages</span>
+  <span class="dot">·</span>
+  <span title="Nothing in this tool reaches the network.">local only</span>
+{% endblock %}
+
+{% block content %}
+
+<section class="panel plug">
+  <h2>Plug in a file or folder</h2>
+  <p class="hint">
+    A PDF, a scan, a folder of them, or a folder ocrtool has already read.
+    Anything not OCR'd yet is OCR'd first. Nothing is written next to your documents.
+  </p>
+  <form id="add-form" class="row">
+    <input type="text" id="add-path" placeholder="/mnt/c/Users/you/Desktop/records  —  or one file" autocomplete="off" spellcheck="false">
+    <label class="check" title="Index only files that are already text."><input type="checkbox" id="add-noocr"> don't OCR</label>
+    <label class="check" title="Read everything again from scratch."><input type="checkbox" id="add-rebuild"> re-read</label>
+    <button type="submit" class="primary">Read it</button>
+  </form>
+  <div id="job" class="job" hidden>
+    <div class="job-line"><span id="job-label"></span><button id="job-stop" class="link">stop</button></div>
+    <div class="bar"><div id="job-bar"></div></div>
+    <pre id="job-log"></pre>
+  </div>
+  <div id="sources" class="sources">
+    {% for source in sources %}
+      <div class="source" data-root="{{ source.root }}">
+        <span class="count">{{ source.documents }} docs · {{ source.pages or 0 }} pages</span>
+        <span class="path">{{ source.root }}</span>
+        <button class="link forget" data-root="{{ source.root }}">forget</button>
+      </div>
+    {% else %}
+      <p class="empty">Nothing plugged in yet.</p>
+    {% endfor %}
+  </div>
+</section>
+
+<nav class="tabs">
+  <button class="tab active" data-tab="ask">Ask</button>
+  <button class="tab" data-tab="chronology">Chronology</button>
+  <button class="tab" data-tab="documents">Documents</button>
+</nav>
+
+<section class="split">
+  <div class="left">
+
+    <div class="tabpane" data-pane="ask">
+      <section class="panel">
+        <form id="ask-form">
+          <textarea id="question" rows="3" placeholder="What injuries were diagnosed, and when?"></textarea>
+          <div class="row wrap-row">
+            <label>Ask about
+              <select id="scope">
+                <option value="">everything indexed</option>
+              </select>
+            </label>
+            <label class="check" title="Skip retrieval and put the whole document in the prompt. Only for one document, and only if it fits.">
+              <input type="checkbox" id="whole"> read the whole document
+            </label>
+            <button type="submit" class="primary">Ask</button>
+          </div>
+          <details class="models">
+            <summary>Models <span id="model-summary" class="hint"></span></summary>
+            <p class="hint">
+              Tick more than one to ask them all the same question. The pages they
+              agree on are the ones to read first.
+            </p>
+            <div id="model-list"></div>
+          </details>
+        </form>
+      </section>
+      <div id="answer"></div>
+    </div>
+
+    <div class="tabpane" data-pane="chronology" hidden>
+      <section class="panel">
+        <p class="hint">
+          Every page read once, in order, for anything with a date on it. Pages
+          with no date are skipped without asking a model. Stop it any time —
+          what has been read is kept.
+        </p>
+        <div class="row wrap-row">
+          <label>Of
+            <select id="chron-scope"><option value="">everything indexed</option></select>
+          </label>
+          <label>Using
+            <select id="chron-model"></select>
+          </label>
+          <label class="check"><input type="checkbox" id="chron-unverified"> show unchecked events</label>
+          <button id="chron-build" class="primary">Build it</button>
+          <button id="chron-load" class="ghost">Show what's done</button>
+          <a id="chron-csv" class="ghost button" href="/api/chronology.csv">CSV</a>
+        </div>
+      </section>
+      <div id="chronology"></div>
+    </div>
+
+    <div class="tabpane" data-pane="documents" hidden>
+      <section class="panel">
+        <div id="documents"></div>
+      </section>
+    </div>
+
+  </div>
+
+  <aside class="right" id="viewer">
+    <div class="viewer-empty">
+      <p>Click any citation to put the scanned page here.</p>
+      <p class="hint">
+        Every finding is checked against the page text before you see it. This is
+        where you check it against the page itself.
+      </p>
+    </div>
+  </aside>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+{% endblock %}
