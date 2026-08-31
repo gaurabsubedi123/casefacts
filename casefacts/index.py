@@ -329,23 +329,46 @@ class Index:
         """Find a document from whatever the user typed.
 
         Exact id, then exact title, then a unique substring of the title — the
-        titles in a claim file run to eighty characters and nobody is typing
-        them in full.
+        titles in a claim file run to eighty characters and nobody types one in
+        full.
+
+        Every step demands a *unique* answer. Two documents can easily share a
+        title ("claim.pdf" in two folders), and quietly answering from
+        whichever one the database returned first would attribute one file's
+        contents to another — the one failure this tool exists to prevent.
+        Ambiguity returns None, and the caller says so.
         """
         if not needle:
             return None
+        row = self.db.execute("SELECT doc_id FROM documents WHERE doc_id = ?", (needle,)).fetchone()
+        if row:
+            return row["doc_id"]
+
         for sql in (
-            "SELECT doc_id FROM documents WHERE doc_id = ?",
-            "SELECT doc_id FROM documents WHERE title = ? COLLATE NOCASE",
-        ):
-            row = self.db.execute(sql, (needle,)).fetchone()
-            if row:
-                return row["doc_id"]
-        rows = self.db.execute(
+            "SELECT doc_id FROM documents WHERE title = ? COLLATE NOCASE AND duplicate_of IS NULL",
             "SELECT doc_id FROM documents WHERE title LIKE ? AND duplicate_of IS NULL",
-            (f"%{needle}%",),
-        ).fetchall()
-        return rows[0]["doc_id"] if len(rows) == 1 else None
+        ):
+            pattern = needle if "LIKE" not in sql else f"%{needle}%"
+            rows = self.db.execute(sql, (pattern,)).fetchall()
+            if len(rows) == 1:
+                return rows[0]["doc_id"]
+            if len(rows) > 1:
+                log.info("%r matches %d documents; refusing to guess", needle, len(rows))
+                return None
+        return None
+
+    def documents_matching(self, needle: str) -> list[dict[str, Any]]:
+        """Every document a name could have meant, for telling the user why."""
+        if not needle:
+            return []
+        return [
+            dict(row)
+            for row in self.db.execute(
+                "SELECT doc_id, title, rel_path, root FROM documents "
+                "WHERE (title = ? COLLATE NOCASE OR title LIKE ?) AND duplicate_of IS NULL",
+                (needle, f"%{needle}%"),
+            )
+        ]
 
     def aliases(self, doc_id: str) -> list[dict[str, Any]]:
         """The other copies of this document in the file.
@@ -361,6 +384,26 @@ class Index:
                 (doc_id,),
             )
         ]
+
+    def doc_for_original(self, path: Path | str) -> str | None:
+        """The indexed document that came from this exact file on disk.
+
+        Plugging in one file and asking about it is the common case, and
+        matching it back by name is ambiguous the moment two folders both hold
+        a "report.pdf". The document knows which file it came from, so ask it
+        that instead — falling back to the text file's own path, for a .txt
+        that was indexed directly.
+        """
+        resolved = Path(path).expanduser().resolve().as_posix()
+        row = self.db.execute(
+            "SELECT doc_id, duplicate_of FROM documents WHERE original_path = ? OR doc_id = ?",
+            (resolved, resolved),
+        ).fetchone()
+        if not row:
+            return None
+        # A file that turned out to be a copy of one already indexed should
+        # answer from the copy that actually holds the pages.
+        return row["duplicate_of"] or row["doc_id"]
 
     def pages(self, doc_id: str) -> list[dict[str, Any]]:
         return [
@@ -547,7 +590,10 @@ class Index:
         with a different filter.
         """
         if doc:
-            resolved = self.resolve_doc(doc)
+            # An exact path wins over a name: the caller may have plugged in a
+            # specific file, and two files can share a name.
+            resolved = self.doc_for_original(doc) if ("/" in doc or "\\" in doc) else None
+            resolved = resolved or self.resolve_doc(doc)
             return [resolved] if resolved else []
         if folder:
             prefix = Path(folder).expanduser().resolve().as_posix().rstrip("/") + "/"

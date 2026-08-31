@@ -86,10 +86,11 @@ def compare(
 ) -> Comparison:
     """Run one question through several models, one after another.
 
-    Sequentially, not in parallel: this machine holds one model in memory at a
-    time, and running two at once would swap rather than overlap. Ollama
-    unloads the previous model as it loads the next, so the first question
-    after a switch pays the load time.
+    Sequentially, not in parallel. Two 5 GB models do not fit in 8 GB of VRAM
+    at once, so asking them together would evict each other rather than
+    overlap. Ollama unloads the previous model as it loads the next, which
+    means the first question after a switch pays the load time — worth knowing
+    before reading anything into a comparison's timings.
     """
     result = Comparison(question=question)
     for model in models:

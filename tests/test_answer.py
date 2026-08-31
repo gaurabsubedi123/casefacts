@@ -96,6 +96,17 @@ class TestScope:
         assert result.findings == []
         assert any("nothing indexed matches" in w for w in result.warnings)
 
+    def test_an_ambiguous_name_is_refused_with_the_candidates_named(self, index, fake_ollama, settings, tmp_path):
+        other = tmp_path / "elsewhere"
+        (other / "txt").mkdir(parents=True)
+        (other / "txt" / "claim.txt").write_text(
+            "----- page 1 (ocr) -----\nanother claim entirely, 5/5/2020", encoding="utf-8"
+        )
+        index.ingest_path(other, ocr=False)
+        result = ask(index, "anything?", doc="claim")
+        assert result.findings == []
+        assert any("matches 2 documents" in w for w in result.warnings)
+
     def test_one_small_document_is_read_whole_instead_of_searched(self, index, fake_ollama):
         fake_ollama.replies = [reply([])]
         result = ask(index, "summarise this", doc="claim")

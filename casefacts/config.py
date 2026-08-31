@@ -31,10 +31,12 @@ log = logging.getLogger(__name__)
 # the failure this tool must not have, so every call sets num_ctx explicitly.
 DEFAULT_NUM_CTX = 8192
 
-# The largest window worth asking for on a machine this size. Qwen2.5 and
-# Gemma 3 both handle far more, but the KV cache is RAM, and RAM here is 7 GB
-# total with a 4.7 GB model already in it. Past this the machine swaps and a
-# question takes minutes instead of seconds.
+# The largest window worth asking for on this machine. Qwen2.5 and Gemma 3
+# both handle far more, but the KV cache lives in VRAM alongside the weights,
+# and there are 8 GB of it here with a 5 GB model already resident. Ask for
+# more than fits and Ollama spills the model to system RAM, at which point a
+# question that took twelve seconds takes minutes — and nothing says so except
+# the clock.
 MAX_NUM_CTX = 32768
 
 # Answers are extraction, not composition. Temperature 0 so the same question

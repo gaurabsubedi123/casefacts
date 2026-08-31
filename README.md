@@ -187,15 +187,23 @@ citations harder, not less.
 
 `casefacts models` prints all of this next to what you have installed.
 
-### A note on memory
+### A note on VRAM
 
-This machine has 7 GB of RAM. `qwen2.5:7b-instruct` is 4.7 GB and fits with room
-for an 8k context. `qwen3:8b` at 5.2 GB is tight. A 27B model will not run here
-at any useful speed, and MedGemma's 27B variant is out of reach — the 4B is the
-right one for this machine.
+This machine has an RTX 4070 Laptop with 8 GB of VRAM, and Ollama runs these
+models **100% on the GPU** — which is why a question comes back in seconds
+rather than minutes.
 
-Only one model is held in memory at a time, which is why comparisons run
-sequentially and the first question after switching models pays the load.
+That 8 GB is the real constraint, because the KV cache lives there next to the
+weights. `qwen2.5:7b-instruct` loads at 5.0 GB with an 8k context and leaves
+room; `qwen3:8b` and `medgemma:4b` both fit. A 27B model does not, so MedGemma's
+27B variant is out of reach here and the 4B is the right one.
+
+Ask for a context window bigger than the remaining VRAM and Ollama quietly
+spills the model into system RAM, where the same question takes minutes.
+Nothing reports this but the clock, which is why `MAX_NUM_CTX` is capped.
+
+Two 5 GB models cannot be resident at once, so comparisons run sequentially and
+the first question after a model switch pays the load time.
 
 ---
 
@@ -261,7 +269,7 @@ in a year.
 
 ## Measured on this machine
 
-WSL2, no GPU, 7 GB RAM, on the 358-page GEICO claim file:
+WSL2, RTX 4070 Laptop (8 GB VRAM), on the 358-page GEICO claim file:
 
 | | |
 |---|---|

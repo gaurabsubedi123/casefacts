@@ -375,9 +375,17 @@ def ask(
 
     doc_ids = index.scope_doc_ids(doc=doc, folder=folder)
     if doc_ids is not None and not doc_ids:
-        answer.warnings.append(
-            f"nothing indexed matches {doc or folder!r} — check the name, or plug the path in first"
-        )
+        candidates = index.documents_matching(doc) if doc else []
+        if len(candidates) > 1:
+            names = ", ".join(c["rel_path"] or c["title"] for c in candidates[:5])
+            answer.warnings.append(
+                f"{doc!r} matches {len(candidates)} documents ({names}) — "
+                "name one exactly, or give its full path"
+            )
+        else:
+            answer.warnings.append(
+                f"nothing indexed matches {doc or folder!r} — check the name, or plug the path in first"
+            )
         return answer
 
     hits, mode, num_ctx = _gather(index, question, doc, doc_ids, top_k, whole, client, model)

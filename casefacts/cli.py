@@ -196,9 +196,10 @@ def _scope(args: argparse.Namespace, index: Index) -> dict[str, Any]:
         root = _plug_in(index, source)
         path = Path(source).expanduser().resolve()
         # A single file plugged in is a document scope, not a folder scope, so
-        # that it can go into the prompt whole.
+        # that it can go into the prompt whole. Resolved by the path it came
+        # from rather than by its name, which two files can share.
         if path.is_file():
-            scope["doc"] = scope["doc"] or path.stem
+            scope["doc"] = scope["doc"] or index.doc_for_original(path) or path.stem
         else:
             scope["folder"] = scope["folder"] or root
         print()

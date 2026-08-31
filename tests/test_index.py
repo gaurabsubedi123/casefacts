@@ -97,6 +97,27 @@ class TestSearch:
         doc_id = index.documents()[0]["doc_id"]
         assert index.scope_doc_ids(doc="claim") == [doc_id]
 
+    def test_a_file_is_found_by_the_path_it_came_from(self, index: Index, settings):
+        """Plugging in one file must resolve to it exactly, not by name."""
+        txt = settings.records_dir / "txt" / "claim.txt"
+        assert index.doc_for_original(txt) == txt.resolve().as_posix()
+        assert index.scope_doc_ids(doc=str(txt)) == [txt.resolve().as_posix()]
+
+    def test_two_files_with_the_same_name_do_not_confuse_each_other(self, index: Index, settings, tmp_path):
+        other = tmp_path / "elsewhere"
+        (other / "txt").mkdir(parents=True)
+        (other / "txt" / "claim.txt").write_text(
+            "----- page 1 (ocr) -----\na different claim entirely, seen 5/5/2020", encoding="utf-8"
+        )
+        index.ingest_path(other, ocr=False)
+        first = settings.records_dir / "txt" / "claim.txt"
+        second = other / "txt" / "claim.txt"
+        assert index.scope_doc_ids(doc=str(first)) == [first.resolve().as_posix()]
+        assert index.scope_doc_ids(doc=str(second)) == [second.resolve().as_posix()]
+        # by bare name it is genuinely ambiguous: refuse rather than guess
+        assert index.scope_doc_ids(doc="claim") == []
+        assert len(index.documents_matching("claim")) == 2
+
     def test_scoping_to_a_name_that_matches_nothing(self, index: Index):
         assert index.scope_doc_ids(doc="no such document") == []
 
