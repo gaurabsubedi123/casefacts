@@ -7,8 +7,9 @@ to any network, and the models are the ones already sitting in your Ollama
 install. That is not a feature list item — for medical records under a
 protective order it is the only arrangement that is allowed.
 
-It is the second half of [ocrtool](../ocr). ocrtool turns a stack of scans into
-searchable text. This turns that text into answers you can check.
+It is the second half of [ocrtool](https://github.com/gaurabsubedi123/OCR).
+ocrtool turns a stack of scans into searchable text. This turns that text into
+answers you can check.
 
 ```
 casefacts ask "what injuries were diagnosed, and when?" --in ~/Desktop/records
@@ -48,11 +49,12 @@ Checking it takes one click.
 
 ## Install
 
-You need [ocrtool](../ocr) (for documents that are not OCR'd yet), Ollama, and
-about 8 GB of disk for models.
+You need [ocrtool](https://github.com/gaurabsubedi123/OCR) (for documents that
+are not OCR'd yet), Ollama, and about 8 GB of disk for models.
 
 ```bash
-cd ~/Desktop/casefacts
+git clone git@github.com:gaurabsubedi123/casefacts.git
+cd casefacts
 make install                          # or: uv venv && uv pip install -e ".[dev]"
 
 ollama serve &                        # if it is not already running
