@@ -67,6 +67,65 @@ ollama pull medgemma:4b               # optional: a second opinion
 
 `doctor` tells you what is missing and the exact command to fix it.
 
+### Setting up on another machine
+
+The repository is the whole tool: a clone and `make install` really is all of
+it. The venv is built relative to wherever the repo sits and nothing in the
+packaging depends on the path, so the folder you choose does not matter. What
+does not travel is everything living outside the repository, which is most of
+what makes it useful.
+
+Clone the two repositories **side by side**:
+
+```bash
+mkdir -p ~/Desktop && cd ~/Desktop
+git clone git@github.com:gaurabsubedi123/OCR.git ocr   # note the lowercase target
+git clone git@github.com:gaurabsubedi123/casefacts.git
+
+cd ocr && make install
+cd ../casefacts && make install
+```
+
+The lowercase `ocr` matters, because nothing here is found by searching.
+`ocrtool_command()` in `sources.py` works out where ocrtool is from where
+casefacts itself is, and the sibling folder it looks for is spelled `ocr`. The
+GitHub repository is named `OCR`, so a plain `git clone` leaves you a folder
+that Linux considers a different name and the lookup misses.
+
+Any other layout works — nested, elsewhere on the disk, a shared checkout —
+but it has to be said out loud:
+
+```bash
+export CASEFACTS_OCRTOOL="$HOME/somewhere/ocr/.venv/bin/ocrtool"
+```
+
+That is checked before anything positional, so it wins whatever the layout.
+It is worth setting even in the sibling layout, where it makes the wiring
+explicit instead of an accident of where two folders happen to sit.
+
+This is worth the paragraphs because the failure is a partial one. With
+ocrtool missing, folders it has already processed still index perfectly well,
+and only documents needing OCR fail — so the tool looks healthy right up until
+the first stack of fresh scans.
+
+Then rebuild the three things a clone does not carry:
+
+* **The models.** `ollama pull` as above, about 8 GB. They belong to Ollama on
+  the machine rather than to this checkout.
+* **The index.** `~/.casefacts/index.db`, deliberately outside the repository
+  and not portable between machines. Re-add each source folder; one that is
+  already OCR'd comes back in seconds, with no re-OCR.
+* **Your documents.** They were never in here, and that is the point.
+
+`casefacts doctor` checks all of it and names the command for anything missing.
+
+Two things to know before trusting the result. The index lives under your home
+directory rather than in the checkout, so two clones on the same machine share
+one index and see each other's sources — usually what you want, and `--db` or
+`CASEFACTS_DB` gives a checkout its own when it is not. And the defaults
+assume the 8 GB of VRAM described under [A note on VRAM](#a-note-on-vram); on a
+smaller GPU, read that section before the first long run rather than after it.
+
 ---
 
 ## Using it
