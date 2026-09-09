@@ -5,3 +5,6 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+
+# personal notes, not part of the project
+Testing.txt
