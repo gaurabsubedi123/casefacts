@@ -9,7 +9,7 @@ install:            ## create the venv and install the tool
 	uv venv || python3 -m venv $(VENV)
 	uv pip install -e ".[dev]" || $(PY) -m pip install -e ".[dev]"
 
-ui:                 ## start the local web interface on http://127.0.0.1:5002
+ui:                 ## start the local web interface on http://127.0.0.1:5001
 	$(PY) -m casefacts.cli ui
 
 test:               ## run the test suite (no model needed)

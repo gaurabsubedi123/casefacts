@@ -353,11 +353,13 @@ taken in pieces.
 ## The web interface
 
 ```bash
-casefacts ui              # http://127.0.0.1:5002
+casefacts ui              # http://127.0.0.1:5001
 ```
 
-Port 5002 because ocrtool's interface is on 5001 and the litigation wiki is on
-5000.
+Port 5001 because 5000 is spoken for twice over — ocrtool's interface defaults
+to it and the litigation wiki hardcodes it. 5001 leaves casefacts and ocrtool
+running at the same time, which is the normal arrangement: OCR a stack in one
+tab, ask questions of it in the other.
 
 Two columns, and that is the entire design: answers on the left, the scanned
 page on the right. Checking a citation never means losing your place.
@@ -425,7 +427,7 @@ casefacts sources             what has been plugged in
 casefacts forget <path>       drop one source from the index
 casefacts models              what is installed, and what each is good for
 casefacts doctor              check Ollama, the models, ocrtool and the index
-casefacts ui                  the web interface on port 5002
+casefacts ui                  the web interface on port 5001
 casefacts config              show or set the defaults
 ```
 

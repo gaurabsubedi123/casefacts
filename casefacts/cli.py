@@ -106,7 +106,7 @@ def main(argv: list[str] | None = None) -> int:
 
     ui_cmd = sub.add_parser("ui", help="start the local web interface")
     ui_cmd.add_argument("--host", default="127.0.0.1", help="default 127.0.0.1 — this machine only")
-    ui_cmd.add_argument("--port", type=int, default=5002, help="default 5002 (ocrtool uses 5001)")
+    ui_cmd.add_argument("--port", type=int, default=5001, help="default 5001 (ocrtool uses 5000)")
     ui_cmd.add_argument("--debug", action="store_true")
 
     setup = sub.add_parser("config", help="show or set the defaults")
