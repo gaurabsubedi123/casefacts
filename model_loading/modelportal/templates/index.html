@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Model Portal</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ version }}">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">Model Portal</div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="ask" class="tab active">Ask</button>
+      <button role="tab" data-tab="models" class="tab">Models</button>
+      <button role="tab" data-tab="documents" class="tab">Documents</button>
+    </nav>
+    <div class="status">
+      <span id="ollama-pill" class="pill">Ollama …</span>
+      <span id="machine-pill" class="pill muted" title="">Checking this computer…</span>
+      <label class="model-pick">
+        <span class="muted small">Model</span>
+        <select id="active-model"><option value="">none plugged in</option></select>
+      </label>
+    </div>
+  </header>
+
+  <div id="banner" class="banner" hidden></div>
+
+  <!-- ============================================================ Ask -->
+  <main id="tab-ask" class="panel active">
+    <section class="ask-left">
+      <div class="card" id="setup" hidden>
+        <h2>Getting started</h2>
+        <ol class="steps" id="steps"></ol>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Documents to ask about</h2>
+          <label class="small"><input type="checkbox" id="select-all"> all</label>
+        </div>
+        <ul id="ask-docs" class="doc-checks"></ul>
+        <p id="ask-docs-empty" class="muted small" hidden>
+          No documents yet. Add OCR'd PDFs or text files on the <a href="#" data-goto="documents">Documents</a> tab.
+        </p>
+      </div>
+
+      <div class="card">
+        <form id="ask-form">
+          <textarea id="question" rows="3" placeholder="Ask a question about the selected documents…"></textarea>
+          <div class="row">
+            <button type="submit" id="ask-btn" class="primary">Ask</button>
+            <button type="button" id="stop-btn" class="ghost" hidden>Stop</button>
+            <span id="ask-progress" class="muted small"></span>
+          </div>
+        </form>
+        <div id="ask-error" class="error" hidden></div>
+      </div>
+
+      <div id="answer" class="card" hidden></div>
+    </section>
+
+    <aside class="ask-right card" id="viewer">
+      <div class="card-head">
+        <h2 id="viewer-title">Page viewer</h2>
+        <div class="seg" id="viewer-mode" hidden>
+          <button data-mode="text" class="on">Page text</button>
+          <button data-mode="file">Original</button>
+        </div>
+      </div>
+      <p id="viewer-empty" class="muted">Click a citation in an answer to see the page it came from, with the quote highlighted.</p>
+      <pre id="viewer-text" class="page-text" hidden></pre>
+      <iframe id="viewer-file" title="Original document" hidden></iframe>
+    </aside>
+  </main>
+
+  <!-- ========================================================= Models -->
+  <main id="tab-models" class="panel">
+    <section class="col">
+      <div class="card">
+        <h2>This computer</h2>
+        <div id="machine"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Downloaded models</h2>
+          <button class="ghost small-btn" id="refresh-models">Refresh</button>
+        </div>
+        <div id="installed"></div>
+        <label class="small meaning">
+          <input type="checkbox" id="meaning-toggle"> Use an embedding model for search by meaning, when one is downloaded
+        </label>
+      </div>
+
+      <div class="card" id="downloads-card" hidden>
+        <h2>Downloads</h2>
+        <div id="downloads"></div>
+      </div>
+    </section>
+
+    <section class="col">
+      <div class="card">
+        <h2>Recommended for this computer</h2>
+        <p class="muted small" id="rec-note">Checking which sizes run well on this GPU…</p>
+        <div id="recommended"></div>
+      </div>
+
+      <div class="card">
+        <h2>Find a model</h2>
+        <div class="seg" id="source">
+          <button data-source="ollama" class="on">Ollama library</button>
+          <button data-source="hf">Hugging Face (GGUF)</button>
+        </div>
+        <form id="search-form" class="row">
+          <input id="search-q" type="search" placeholder="qwen, deepseek, llama…">
+          <button type="submit" class="primary">Search</button>
+        </form>
+        <p id="search-note" class="muted small"></p>
+        <div id="results"></div>
+      </div>
+
+      <div class="card">
+        <h2>Download by exact name</h2>
+        <p class="muted small">Anything <code>ollama pull</code> accepts, for example <code>qwen2.5:7b</code> or
+          <code>hf.co/bartowski/Qwen2.5-7B-Instruct-GGUF:Q4_K_M</code>.</p>
+        <form id="pull-form" class="row">
+          <input id="pull-name" placeholder="model:tag">
+          <button type="submit" class="primary">Download</button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <!-- ====================================================== Documents -->
+  <main id="tab-documents" class="panel">
+    <section class="col wide">
+      <div class="card">
+        <h2>Add documents</h2>
+        <div id="drop" class="drop">
+          <p><strong>Drop OCR'd PDFs or text files here</strong></p>
+          <p class="muted small">PDFs must already have a text layer (OCR'd, e.g. by ocrtool). ocrtool's .txt files keep their page numbers.
+            Files are copied into the portal's own folder on this computer; nothing is uploaded anywhere.</p>
+          <div class="row center">
+            <label class="button primary">Choose files<input type="file" id="file-input" multiple accept=".pdf,.txt,.md" hidden></label>
+            <label class="button ghost">Choose a folder<input type="file" id="folder-input" webkitdirectory multiple hidden></label>
+          </div>
+        </div>
+        <div id="add-progress" class="muted small"></div>
+        <div id="add-errors"></div>
+      </div>
+
+      <div class="card">
+        <h2>Library</h2>
+        <div id="library"></div>
+      </div>
+    </section>
+  </main>
+
+  <template id="spinner"><span class="spin" aria-hidden="true"></span></template>
+  <script src="{{ url_for('static', filename='app.js') }}?v={{ version }}"></script>
+</body>
+</html>

@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "modelportal"
+version = "0.1.0"
+description = "Find, download and switch between local models, and ask questions of OCR'd documents with checked citations."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+
+# Kept small on purpose: this is meant to be frozen into one .exe and copied to
+# machines nobody has set up. Every dependency is another thing PyInstaller has
+# to find. Ollama is spoken to over plain HTTP with urllib, and search needs no
+# numpy at the sizes one person's document pile reaches.
+dependencies = [
+    "Flask>=3.0,<4",
+    "pypdf>=4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+exe = ["pyinstaller>=6.0"]
+
+[project.scripts]
+modelportal = "modelportal.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["modelportal"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
