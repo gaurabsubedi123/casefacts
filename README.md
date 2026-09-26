@@ -15,6 +15,12 @@ answers you can check.
 casefacts ask "what injuries were diagnosed, and when?" --in ~/Desktop/records
 ```
 
+[`model_loading/`](model_loading/) holds **Model Portal**, a separate tool that
+lives in this repository: a single Windows .exe for handing to someone else,
+which finds models that fit their GPU, downloads and plugs them in, and answers
+questions about OCR'd documents with the same quote checks. Its
+[README](model_loading/README.md) covers building and running it.
+
 ---
 
 ## The problem this is built around
