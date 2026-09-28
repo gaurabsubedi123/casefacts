@@ -64,8 +64,13 @@
               <span class="muted">Model</span>
               <select id="chat-model" class="model-select"><option value="">none plugged in</option></select>
             </label>
+            <label class="web-pick small" title="Also search the internet for this question. Only a short search query is sent, never your documents. Pages already found in this chat are always read again.">
+              <input type="checkbox" id="web-toggle"> Search the web
+            </label>
             <span id="ask-progress" class="muted small"></span>
           </div>
+          <p id="web-hint" class="muted small web-hint" hidden></p>
+          <div id="web-setup-ask" class="web-setup" hidden></div>
         </form>
         <div id="ask-error" class="error" hidden></div>
       </div>
@@ -74,6 +79,7 @@
     <aside class="ask-right card" id="viewer">
       <div class="card-head">
         <h2 id="viewer-title">Page viewer</h2>
+        <a id="viewer-link" class="small" target="_blank" rel="noopener noreferrer" hidden>Open the website ↗</a>
         <div class="seg" id="viewer-mode" hidden>
           <button data-mode="text" class="on">Page text</button>
           <button data-mode="file">Original</button>
@@ -102,6 +108,15 @@
         <label class="small meaning">
           <input type="checkbox" id="meaning-toggle"> Use an embedding model for search by meaning, when one is downloaded
         </label>
+      </div>
+
+      <div class="card" id="web-card">
+        <h2>Web search</h2>
+        <p class="small muted">Lets a question also search the internet when you tick <b>Search the web</b> beside Ask.
+          It uses Ollama's web search, which needs a free ollama.com account key.
+          Only a short search query leaves this computer, never your documents.</p>
+        <div id="web-setup-models"></div>
+        <p id="web-usage" class="small muted"></p>
       </div>
 
       <div class="card" id="downloads-card" hidden>

@@ -67,7 +67,7 @@ code { font-size: 13px; background: var(--surface-2); padding: 1px 4px; border-r
 .pill.good { background: var(--good-bg); color: var(--good); }
 .pill.bad { background: var(--bad-bg); color: var(--bad); }
 .model-pick { display: flex; gap: 6px; align-items: center; }
-select, input[type=search], input:not([type]), textarea {
+select, input[type=search], input[type=password], input:not([type]), textarea {
   font: inherit; color: var(--text); background: var(--surface); border: 1px solid var(--line);
   border-radius: 8px; padding: 7px 10px; min-width: 0;
 }
@@ -192,3 +192,15 @@ details.thinking pre { white-space: pre-wrap; color: var(--muted); max-height: 3
 .steps li { margin: 6px 0; }
 .steps li.done { color: var(--muted); }
 .steps li.done::marker { content: "✓  "; color: var(--good); }
+
+/* web search */
+.web-pick { display: flex; gap: 6px; align-items: center; }
+.web-hint { margin: 6px 0 0; }
+.badge.web { background: var(--info-bg); color: var(--accent); margin-left: 6px; }
+.web-setup { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.web-guide-title { margin: 10px 0 6px; font-size: 14px; }
+.web-steps { margin: 0; padding-left: 20px; font-size: 13.5px; }
+.web-steps li { margin: 6px 0; }
+.web-steps .button { text-decoration: none; margin: 4px 0; display: inline-block; }
+.web-key-form input { flex: 1; min-width: 0; }
+#viewer-link { margin-left: auto; }

@@ -53,8 +53,20 @@ copied into the portal's own data folder, and the originals are never touched.
   checked against the page before you see it:
   **verified** / **close** (OCR noise) / **joined** (read across columns) /
   **wrong page** (citation corrected) / **unverified** (not found; shown last).
-* Click a citation and the page opens on the right with the quote highlighted.
-  For a PDF you can switch to the original.
+* Click a citation and the page opens on the right with the quote highlighted
+  (close and joined quotes too, piece by piece). For a PDF you can switch to
+  the original.
+* **Search the web** (a checkbox beside Ask, off by default) also searches the
+  internet for that question, through Ollama's web search and a free
+  ollama.com key. Ticking it with no key shows a three-step guide (make an
+  account, create a key, paste it) with buttons to the right ollama.com pages;
+  the key is tried before it is saved. Only a short query is sent, never a
+  document; names, dates and long numbers from the conversation are stripped
+  from it, and the query is shown with the answer. Web quotes are checked like
+  page quotes. Pages found are saved with the chat, so a follow-up with web off
+  can still quote them. Each web question uses 1 search plus up to 5 page
+  fetches; the free account has a limit Ollama does not publish, and the
+  Models tab counts today's use.
 * Small documents are read whole. Larger ones are searched: by keyword, and by
   meaning too if the small `nomic-embed-text` model is downloaded (it's in the
   recommended list).
@@ -70,8 +82,9 @@ copied into the portal's own data folder, and the originals are never touched.
    runtime. On Windows the portal shows an **Install Ollama** button that
    downloads and opens Ollama's official installer. On macOS and Linux it shows
    the download link.
-3. **Internet access, for downloading models only.** Documents and questions
-   never leave the computer.
+3. **Internet access, for downloading models** — and for web search, if a
+   question asks for it. Documents never leave the computer; with web search
+   on, a short search query does.
 
 The GPU is detected on each start. NVIDIA is read through `nvidia-smi` (it
 ships with the driver). On Windows, AMD cards are read from the display-adapter
@@ -179,7 +192,7 @@ A *Getting started* checklist on the Ask tab tracks these steps.
 ```bash
 make install
 make run          # opens http://127.0.0.1:5050 (or the next free port)
-make test         # 37 tests, no model or network needed
+make test         # 55 tests, no model or network needed
 ```
 
 Port 5050 was chosen so it doesn't collide with ocrtool or the wiki on 5000, or
@@ -198,6 +211,7 @@ modelportal/
   documents.py  the document library; PDF/text extraction; the OCR check
   retrieve.py   whole-document or keyword+meaning search, page-bounded chunks
   answer.py     prompt, JSON parsing, quote verification
+  websearch.py  optional web search via Ollama's API; query scrubbing
   jobs.py       background tasks with progress and stop
   web.py        Flask app, localhost-only, with cross-site request guards
 packaging/      PyInstaller entry point and spec

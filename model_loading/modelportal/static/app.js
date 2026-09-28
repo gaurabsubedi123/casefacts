@@ -84,6 +84,7 @@ async function refreshStatus() {
   let s;
   try { s = await api("/api/status"); } catch (e) { setBanner(esc(e.message)); return; }
   state.status = s;
+  renderWeb(s.web);
   const pill = $("#ollama-pill");
   if (s.ollama.up) {
     pill.textContent = `Ollama ${s.ollama.version || ""} running`;
@@ -658,7 +659,8 @@ async function askQuestion() {
   progress.innerHTML = '<span class="spin"></span>Starting…';
   let failed = true;
   try {
-    const started = await api("/api/ask", { json: { question, model, documents: [...state.selected], chat: chat.id } });
+    const web = $("#web-toggle").checked;
+    const started = await api("/api/ask", { json: { question, model, documents: [...state.selected], chat: chat.id, web } });
     state.askJob = started.job;
     if (!chat.id) {
       chat.id = started.chat;
@@ -681,6 +683,7 @@ async function askQuestion() {
     failed = false;
     chat.turns.push({ question, result: done.result });
     renderThread();
+    if (web) refreshWebUsage();
     const last = $("#thread").lastElementChild;
     last?.scrollIntoView({ block: "start", behavior: "smooth" });
     if (done.result.findings[0]?.doc_id) openPage(done.result.findings[0]);
@@ -721,14 +724,18 @@ function answerHTML(r, t) {
       <span class="badge ${esc(f.verdict.replace(" ", "-"))}" title="${esc(VERDICT_HELP[f.verdict] || "")}">${esc(f.verdict)}</span>
       <p class="statement">${esc(f.statement)}</p>
       ${f.quote ? `<blockquote>“${esc(f.quote)}”</blockquote>` : ""}
-      ${f.doc_id ? `<button class="cite" data-t="${t}" data-f="${i}">${esc(f.title)} — page ${f.page}</button>` : ""}
+      ${f.doc_id ? `<button class="cite" data-t="${t}" data-f="${i}">${f.url ? `${esc(f.title)} — ${esc(siteOf(f.url))}` : `${esc(f.title)} — page ${f.page}`}</button>${f.url ? '<span class="badge web">web</span>' : ""}` : ""}
     </div>`).join("");
+  const w = r.web || {};
+  const webLine = w.searched ? `Searched the web for “${w.query}” · ${w.found} new page(s) found` + (w.used ? ` · ${w.used} read` : "")
+    : w.used ? `Read ${w.used} web page(s) found earlier in this chat` : "";
   const meta = [r.mode, r.seconds !== undefined ? `${r.seconds}s` : "",
     r.findings.length ? `${r.verified} of ${r.findings.length} findings checked against the page` : ""].filter(Boolean).map(esc).join(" · ");
   return `
     <div class="model-tag">${esc(r.model)}</div>
     ${r.answer ? `<p class="answer-text">${esc(r.answer)}</p>` : '<p class="muted">No answer found in the selected documents.</p>'}
     <div class="meta">${meta}</div>
+    ${webLine ? `<div class="meta"><span class="badge web">web</span> ${esc(webLine)}</div>` : ""}
     ${r.missing ? `<div class="note"><b>Not in the documents:</b> ${esc(r.missing)}</div>` : ""}
     ${r.warnings.map((w) => `<div class="note">${esc(w)}</div>`).join("")}
     ${findings}
@@ -760,6 +767,7 @@ function newChat() {
   chat.id = null;
   chat.title = "";
   chat.turns = [];
+  setWeb(false); // every new chat starts with web search off
   store.set("chatId", null);
   renderChatTitle();
   renderThread();
@@ -776,6 +784,7 @@ async function openChat(id, quiet) {
     chat.title = saved.title;
     chat.turns = saved.turns;
     store.set("chatId", chat.id);
+    setWeb(false);
     // Carry on with the documents the chat was about, those still in the library.
     const still = saved.documents.filter((d) => state.docs.some((doc) => doc.id === d));
     if (still.length) {
@@ -842,19 +851,21 @@ $$("#viewer-mode button").forEach((b) => b.addEventListener("click", () => {
   if (viewing) openPage(viewing);
 }));
 
-function highlight(text, quote) {
-  const safe = esc(text);
-  if (!quote) return safe;
-  const words = quote.toLowerCase().match(/[a-z0-9]+/g) || [];
-  if (!words.length) return safe;
-  const pattern = new RegExp(words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("[^a-z0-9]+"), "i");
-  const match = pattern.exec(text);
-  if (!match) return safe;
-  return esc(text.slice(0, match.index)) + `<mark id="hit">${esc(match[0])}</mark>` + esc(text.slice(match.index + match[0].length));
+function highlight(text, spans) {
+  // spans: [start, end] ranges from the server, in order. A quote read across
+  // columns or through OCR errors comes back as several pieces; mark them all.
+  let html = "", at = 0;
+  spans.forEach(([start, end], i) => {
+    html += esc(text.slice(at, start)) + `<mark${i ? "" : ' id="hit"'}>${esc(text.slice(start, end))}</mark>`;
+    at = end;
+  });
+  return html + esc(text.slice(at));
 }
 
 async function openPage(f) {
   viewing = f;
+  $("#viewer-link").hidden = true;
+  if (f.url) return openWebPage(f);
   const doc = state.docs.find((d) => d.id === f.doc_id);
   const isPdf = doc?.kind === "pdf";
   $("#viewer-title").textContent = `${f.title} — page ${f.page}`;
@@ -874,8 +885,133 @@ async function openPage(f) {
   text.hidden = false;
   text.textContent = "Loading…";
   try {
-    const page = await api(`/api/documents/${f.doc_id}/page/${f.page}`);
-    text.innerHTML = highlight(page.text, f.quote);
+    // An unverified quote is not on the page; marking stray matches would say it was.
+    const quote = f.quote && f.verdict !== "unverified" ? `?quote=${encodeURIComponent(f.quote)}` : "";
+    const page = await api(`/api/documents/${f.doc_id}/page/${f.page}${quote}`);
+    text.innerHTML = highlight(page.text, page.spans || []);
+    const hit = $("#hit", text);
+    if (hit) hit.scrollIntoView({ block: "center" });
+  } catch (e) {
+    text.textContent = e.message;
+  }
+}
+
+// ------------------------------------------------------------- web search
+
+function siteOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+}
+
+function setWeb(on) {
+  $("#web-toggle").checked = on;
+  updateWebHint();
+}
+
+function updateWebHint() {
+  const on = $("#web-toggle").checked;
+  const w = state.status?.web;
+  const keySet = !!w?.key_set;
+  const hint = $("#web-hint");
+  hint.hidden = !on || !keySet;
+  hint.textContent = "Web search is on for the next question. A short search query goes to Ollama's web search; your documents stay here.";
+  const setup = $("#web-setup-ask");
+  const show = on && !keySet && !!w;
+  if (show && setup.hidden) setup.innerHTML = webGuideHTML(w, "Web search needs a free Ollama key. Three steps, once:");
+  setup.hidden = !show;
+}
+$("#web-toggle").onchange = updateWebHint;
+
+// The key guide: the same three steps on the Ask tab and the Models tab.
+function webGuideHTML(w, lead) {
+  return `
+    <h3 class="web-guide-title">${esc(lead)}</h3>
+    <ol class="web-steps">
+      <li><b>Make a free Ollama account.</b> Already have one? Skip this.<br>
+        <a class="button small-btn" href="${esc(w.signup_page)}" target="_blank" rel="noopener noreferrer">Open the ollama.com sign-up page ↗</a></li>
+      <li><b>Create a key.</b> Sign in if asked, create a new API key (any name, such as "Model Portal"), and copy it.<br>
+        <a class="button small-btn" href="${esc(w.key_page)}" target="_blank" rel="noopener noreferrer">Open the key page ↗</a></li>
+      <li><b>Paste it here</b> and click Save. The portal tries the key before keeping it.
+        <form class="row web-key-form" data-web-key-form>
+          <input type="password" placeholder="Paste the key" autocomplete="off" data-web-key>
+          <button type="submit" class="primary small-btn">Save key</button>
+        </form>
+        <div data-web-key-msg></div></li>
+    </ol>`;
+}
+
+let webKeyShown = null; // key state the Models card was last drawn for
+
+function renderWeb(w) {
+  if (!w) return;
+  if (webKeyShown !== w.key_set) {
+    webKeyShown = w.key_set;
+    $("#web-setup-models").innerHTML = w.key_set
+      ? `<div class="okay">${w.from_env ? "Using the key from the OLLAMA_API_KEY setting on this computer." : "A key is saved. Web search is ready."}</div>
+         ${w.from_env ? "" : '<div class="row"><button type="button" class="ghost small-btn" data-web-key-remove>Remove key</button></div>'}`
+      : webGuideHTML(w, "Set up web search: three steps, once");
+  }
+  $("#web-usage").textContent = `Used today: ${w.searches_today} search(es) and ${w.fetches_today} page fetch(es). ` +
+    "Each web question uses 1 search, plus up to 5 page fetches when a result is only a short snippet. " +
+    "Ollama's free account includes a limited number of searches that Ollama does not publish; if it is reached, " +
+    "the answer says so and uses your documents only. Paid Ollama plans have higher limits.";
+  updateWebHint();
+}
+
+async function refreshWebUsage() {
+  try { const w = await api("/api/web"); state.status && (state.status.web = w); renderWeb(w); } catch { /* shown on next status */ }
+}
+
+document.addEventListener("submit", async (e) => {
+  const form = e.target.closest("[data-web-key-form]");
+  if (!form) return;
+  e.preventDefault();
+  const input = $("[data-web-key]", form);
+  const message = $("[data-web-key-msg]", form.parentElement);
+  const button = $("button", form);
+  const key = input.value.trim();
+  if (!key) { message.innerHTML = '<div class="error">Paste the key first.</div>'; return; }
+  button.disabled = true;
+  message.innerHTML = '<span class="muted small"><span class="spin"></span>Trying the key…</span>';
+  try {
+    const w = await api("/api/web/key", { json: { key } });
+    const fromAsk = !!form.closest("#web-setup-ask");
+    input.value = "";
+    if (state.status) state.status.web = w;
+    renderWeb(w); // both guides give way to "ready"
+    if (w.note) $("#web-setup-models").insertAdjacentHTML("beforeend", `<div class="note">${esc(w.note)}</div>`);
+    if (fromAsk) $("#web-hint").textContent = w.note || "The key works. Web search is ready: press Ask.";
+  } catch (err) {
+    message.innerHTML = `<div class="error">${esc(err.message)}</div>`;
+  } finally {
+    button.disabled = false;
+  }
+});
+
+document.addEventListener("click", async (e) => {
+  if (!e.target.closest("[data-web-key-remove]")) return;
+  if (!confirm("Remove the web search key from this computer? Web search stops working until a key is added again.")) return;
+  const w = await api("/api/web/key", { json: { key: "" } });
+  if (state.status) state.status.web = w;
+  renderWeb(w);
+});
+
+async function openWebPage(f) {
+  const text = $("#viewer-text");
+  $("#viewer-title").textContent = f.title;
+  $("#viewer-empty").hidden = true;
+  $("#viewer-mode").hidden = true;
+  $("#viewer-file").hidden = true;
+  text.hidden = false;
+  if (/^https?:\/\//i.test(f.url)) {
+    $("#viewer-link").href = f.url;
+    $("#viewer-link").hidden = false;
+  }
+  text.textContent = "Loading…";
+  try {
+    const pageId = f.doc_id.replace(/^web:/, "");
+    const quote = f.quote && f.verdict !== "unverified" ? `?quote=${encodeURIComponent(f.quote)}` : "";
+    const page = await api(`/api/chats/${chat.id}/web/${pageId}${quote}`);
+    text.innerHTML = highlight(page.text, page.spans || []);
     const hit = $("#hit", text);
     if (hit) hit.scrollIntoView({ block: "center" });
   } catch (e) {

@@ -23,12 +23,13 @@ from typing import Any
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
 from . import __version__, catalog, hardware
-from .answer import AskError, ask, validate
+from .answer import AskError, ask, quote_spans, validate
 from .chats import Chats, history_of
 from .documents import SUPPORTED, Cancelled, Library, NotOCRed, empty_page_numbers
 from .jobs import Job, Jobs
 from .ollama import DOWNLOAD_URL, Ollama, OllamaError, Stopped, find_binary
 from .paths import data_dir, resource_dir
+from .websearch import KEY_PAGE, SIGNUP_PAGE, WebError, WebSearch
 
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "[::1]"}
 OLLAMA_WINDOWS_INSTALLER = "https://ollama.com/download/OllamaSetup.exe"
@@ -109,6 +110,50 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
     def home() -> str:
         return render_template("index.html", version=__version__)
 
+    # -------------------------------------------------------- web search
+
+    def web_key() -> str:
+        return settings.get("web_key") or os.environ.get("OLLAMA_API_KEY", "")
+
+    def count_web_call(kind: str) -> None:
+        today = time.strftime("%Y-%m-%d")
+        usage = settings.get("web_usage") or {}
+        if usage.get("date") != today:
+            usage = {"date": today, "search": 0, "fetch": 0}
+        usage[kind] = usage.get(kind, 0) + 1
+        settings.set(web_usage=usage)
+
+    def web_state() -> dict[str, Any]:
+        usage = settings.get("web_usage") or {}
+        today = usage if usage.get("date") == time.strftime("%Y-%m-%d") else {}
+        return {"key_set": bool(web_key()), "from_env": not settings.get("web_key") and bool(web_key()),
+                "key_page": KEY_PAGE, "signup_page": SIGNUP_PAGE, "searches_today": today.get("search", 0),
+                "fetches_today": today.get("fetch", 0)}
+
+    @app.get("/api/web")
+    def web_get():
+        return jsonify(web_state())
+
+    @app.post("/api/web/key")
+    def web_set_key():
+        # Kept in settings.json on this computer; never sent back to the page.
+        key = "".join(str(body().get("key") or "").split())
+        if not key:
+            settings.set(web_key=None)
+            return jsonify(web_state())
+        # Tried before it is kept, so a key copied half-way is caught now, not
+        # at the first question. Offline is not the key's fault: kept anyway.
+        note = ""
+        try:
+            WebSearch(lambda: key, counted=count_web_call).check()
+        except WebError as exc:
+            if "refused" in str(exc):
+                return jsonify(error="Ollama did not accept that key. Copy it again from the key page "
+                                     "(the whole key, nothing else) and paste it here."), 400
+            note = f"Saved, but it could not be tried: {exc}"
+        settings.set(web_key=key)
+        return jsonify({**web_state(), "note": note})
+
     # ----------------------------------------------------------- status
 
     def embed_model(installed: list[dict[str, Any]] | None = None) -> str | None:
@@ -142,6 +187,7 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
             "active_model": active,
             "context": (settings.get("contexts") or {}).get(active) if active else None,
             "loading": [j.to_dict() for j in jobs.active("load")],
+            "web": web_state(),
         }
         if up and active:
             try:
@@ -476,7 +522,10 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
         pages = library.pages(doc_id)
         if not 1 <= number <= len(pages):
             abort(404)
-        return jsonify(page=number, pages=len(pages), text=pages[number - 1])
+        text = pages[number - 1]
+        # With ?quote=, where that quote is on the page, for the viewer to mark.
+        quote = request.args.get("quote", "")
+        return jsonify(page=number, pages=len(pages), text=text, spans=quote_spans(quote, text) if quote else [])
 
     # ------------------------------------------------------------ asking
 
@@ -488,6 +537,10 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
         model = str(data.get("model") or settings.get("active_model") or "")
         validate(library, question, doc_ids, model)
         chat = chats.get(str(data.get("chat") or ""))
+        search_web = bool(data.get("web"))
+        if search_web and not web_key():
+            raise AskError(f"Web search needs a key. Add one on the Models tab (a free key from {KEY_PAGE}), "
+                           "or untick Search the web.")
         if is_cloud(model):
             raise AskError("That is a cloud model; your documents would leave this computer.")
         if jobs.active("load"):
@@ -501,12 +554,16 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
         if chat is None:
             chat = chats.create(question)
         history = history_of(chat)
+        saved_pages = chat.get("web_pages", [])
+        searcher = WebSearch(web_key, counted=count_web_call) if search_web else None
 
         def work(job: Job) -> dict[str, Any]:
             result = ask(client, library, question, doc_ids, model, context, embed_model=embed_model(),
-                         history=history, on_progress=job.update, should_stop=lambda: job.stopping)
+                         history=history, web_pages=saved_pages, web=searcher,
+                         on_progress=job.update, should_stop=lambda: job.stopping)
             # Saved only once answered: a stopped or failed question is not part of the chat.
-            chats.add_turn(chat["id"], question.strip(), result, doc_ids)
+            found = result.pop("new_web_pages", [])
+            chats.add_turn(chat["id"], question.strip(), result, doc_ids, web_pages=found)
             return result
 
         job = jobs.start("ask", question[:80], work)
@@ -525,6 +582,15 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
         if not chat:
             return jsonify(error="That chat is no longer in History."), 404
         return jsonify(chat)
+
+    @app.get("/api/chats/<chat_id>/web/<page_id>")
+    def chat_web_page(chat_id: str, page_id: str):
+        page = chats.web_page(chat_id, page_id)
+        if not page:
+            return jsonify(error="That web page is no longer saved with this chat."), 404
+        quote = request.args.get("quote", "")
+        return jsonify(url=page["url"], title=page["title"], site=page["site"], text=page["text"],
+                       spans=quote_spans(quote, page["text"]) if quote else [])
 
     @app.delete("/api/chats/<chat_id>")
     def chat_delete(chat_id: str):

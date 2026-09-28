@@ -2,7 +2,8 @@
 reopened from History and continued.
 
 One JSON file per chat under <data>/chats, next to the document library. Like
-the documents, nothing here leaves the computer.
+the documents, nothing here leaves the computer. Web pages a question found
+are saved with its chat, so a follow-up can quote them without searching again.
 """
 
 from __future__ import annotations
@@ -63,15 +64,23 @@ class Chats:
         self._save(chat)
         return chat
 
-    def add_turn(self, chat_id: str, question: str, result: dict[str, Any], documents: list[str]) -> None:
+    def add_turn(self, chat_id: str, question: str, result: dict[str, Any], documents: list[str],
+                 web_pages: list[dict[str, str]] = ()) -> None:
         with self._lock:
             chat = self.get(chat_id)
             if not chat:
                 return
             chat["turns"].append({"question": question, "asked": time.time(), "result": result})
+            # Web pages found for this question, kept so later questions can quote them unsearched.
+            known = {p["url"] for p in chat.get("web_pages", [])}
+            chat["web_pages"] = chat.get("web_pages", []) + [p for p in web_pages if p["url"] not in known]
             chat["documents"] = documents
             chat["updated"] = time.time()
             self._save(chat)
+
+    def web_page(self, chat_id: str, page_id: str) -> dict[str, str] | None:
+        chat = self.get(chat_id)
+        return next((p for p in (chat or {}).get("web_pages", []) if p["id"] == page_id), None)
 
     def delete(self, chat_id: str) -> bool:
         path = self._path(chat_id)

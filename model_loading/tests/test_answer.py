@@ -1,6 +1,7 @@
 import pytest
 
-from modelportal.answer import AskError, check, history_block, parse_reply, partial_answer, search_text, validate
+from modelportal.answer import (AskError, check, history_block, parse_reply, partial_answer, quote_spans, search_text,
+                                validate)
 from modelportal.documents import Library
 from modelportal.retrieve import Chunk, bm25_rank, gather
 
@@ -33,6 +34,37 @@ def test_invented_quote_is_unverified():
 def test_ocr_noise_is_close():
     f = check({"statement": "s", "quote": "motor vehicle accldent on 07/06/2018", "excerpt": 2}, excerpts(), by_text)
     assert f["verdict"] in ("close", "joined", "verified")
+
+
+def marked(page, quote):
+    return [page[a:b] for a, b in quote_spans(quote, page)]
+
+
+def test_whole_quote_is_marked_once():
+    assert marked(PAGE, "Diagnosis: lumbar strain") == ["Diagnosis: lumbar strain"]
+
+
+def test_joined_quote_is_marked_in_pieces():
+    # Two columns read line by line: the quote's halves have the other column between them.
+    page = ("Patient was seen in the     Billing code 99284 applies\n"
+            "emergency department on     to the facility charge for\n"
+            "the morning of 07/06/2018.  that visit only.")
+    quote = "Patient was seen in the emergency department on the morning of 07/06/2018"
+    assert check({"statement": "s", "quote": quote, "excerpt": 1}, [Chunk("d", "R", 1, page)], by_text)["verdict"] == "joined"
+    assert marked(page, quote) == ["Patient was seen in the", "emergency department on", "the morning of 07/06/2018"]
+
+
+def test_close_quote_marks_the_whole_mangled_word():
+    assert marked(PAGE, "motor vehicle accldent on 07/06/2018") == ["motor vehicle accident on 07/06/2018"]
+
+
+def test_a_mangled_short_word_stays_inside_the_mark():
+    page = "The patient was seen by tbe physician on Monday."
+    assert marked(page, "seen by the physician on Monday") == ["seen by tbe physician on Monday"]
+
+
+def test_unrelated_quote_marks_nothing():
+    assert marked(PAGE, "fractured femur requiring surgery") == []
 
 
 def test_parse_reply_tolerates_fences_and_truncation():

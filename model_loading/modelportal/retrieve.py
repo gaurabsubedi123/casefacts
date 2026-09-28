@@ -13,6 +13,9 @@ model is installed in Ollama — by meaning as well, with the two rankings fused
 (reciprocal rank fusion). Keywords find "L4-L5"; meaning finds "back injury"
 when the page says "lumbar strain". Vectors are computed once per document and
 kept on disk.
+
+Web pages found for a question (see websearch.py) join the same ranking as
+one more source, capped so they never crowd the documents out.
 """
 
 from __future__ import annotations
@@ -37,6 +40,7 @@ CHARS_PER_TOKEN = 3.0
 # Small models read a handful of well-chosen pages better than thirty
 # marginal ones.
 MAX_EXCERPTS = 14
+MAX_WEB_EXCERPTS = 5
 
 STOPWORDS = set(
     "a an and are as at be but by for from had has have he her his i if in into is it its of on or "
@@ -52,14 +56,18 @@ class Chunk:
     page: int
     text: str
     score: float = 0.0
+    url: str = ""  # set for a web page; doc_id is then "web:<page id>"
 
     @property
     def key(self) -> str:
         return f"{self.doc_id}:{self.page}:{hash(self.text) & 0xFFFF:x}"
 
     def to_dict(self) -> dict:
-        return {"doc_id": self.doc_id, "title": self.title, "page": self.page,
-                "text": self.text, "score": round(self.score, 4)}
+        out = {"doc_id": self.doc_id, "title": self.title, "page": self.page,
+               "text": self.text, "score": round(self.score, 4)}
+        if self.url:
+            out["url"] = self.url
+        return out
 
 
 def words(text: str) -> list[str]:
@@ -96,6 +104,16 @@ def chunks_for(library: Library, doc_ids: Sequence[str]) -> list[Chunk]:
             continue
         for number, text in enumerate(library.pages(doc_id), start=1):
             out.extend(chunk_page(doc_id, document.name, number, text))
+    return out
+
+
+def web_chunks(pages: Sequence[dict]) -> list[Chunk]:
+    """Saved web pages as chunks: each page counts as page 1 of its own source."""
+    out: list[Chunk] = []
+    for page in pages:
+        for chunk in chunk_page(f"web:{page['id']}", page["title"], 1, page["text"]):
+            chunk.url = page["url"]
+            out.append(chunk)
     return out
 
 
@@ -140,16 +158,22 @@ def vectors_for(library: Library, doc_id: str, chunks: Sequence[Chunk], model: s
         if chunks and len(flat) % len(chunks) == 0:
             width = len(flat) // len(chunks)
             return [flat[i * width:(i + 1) * width] for i in range(len(chunks))]
+    vectors = embed_chunks(chunks, model, embed)
+    flat = array("f")
+    for vector in vectors:
+        flat.extend(vector)
+    path.write_bytes(flat.tobytes())
+    return vectors
+
+
+def embed_chunks(chunks: Sequence[Chunk], model: str,
+                 embed: Callable[[str, list[str]], list[list[float]]]) -> list[array]:
     vectors: list[array] = []
     for start in range(0, len(chunks), 32):
         batch = embed(model, [f"search_document: {c.text}" for c in chunks[start:start + 32]])
         for vector in batch:
             norm = math.sqrt(sum(x * x for x in vector)) or 1.0
             vectors.append(array("f", (x / norm for x in vector)))
-    flat = array("f")
-    for vector in vectors:
-        flat.extend(vector)
-    path.write_bytes(flat.tobytes())
     return vectors
 
 
@@ -181,9 +205,11 @@ def budget_chars(context_tokens: int, reserve_tokens: int) -> int:
 def gather(library: Library, question: str, doc_ids: Sequence[str], *, context_tokens: int,
            reserve_tokens: int, embed_model: str | None = None,
            embed: Callable[[str, list[str]], list[list[float]]] | None = None,
-           progress: Callable[[str], None] | None = None) -> tuple[list[Chunk], str]:
+           progress: Callable[[str], None] | None = None,
+           web_pages: Sequence[dict] = ()) -> tuple[list[Chunk], str]:
     """The excerpts to put in the prompt, and how they were chosen."""
     budget = budget_chars(context_tokens, reserve_tokens)
+    web = web_chunks(web_pages)
 
     whole: list[Chunk] = []
     for doc_id in doc_ids:
@@ -193,11 +219,15 @@ def gather(library: Library, question: str, doc_ids: Sequence[str], *, context_t
         for number, text in enumerate(library.pages(doc_id), start=1):
             if text.strip():
                 whole.append(Chunk(doc_id, document.name, number, text.strip()))
-    total = sum(len(c.text) + 40 for c in whole)
-    if whole and total <= budget:
-        return whole, "whole document" if len(doc_ids) == 1 else "whole documents"
+    whole_web = [Chunk(f"web:{p['id']}", p["title"], 1, p["text"].strip(), url=p["url"])
+                 for p in web_pages if p["text"].strip()][:MAX_WEB_EXCERPTS]
+    total = sum(len(c.text) + 40 for c in whole + whole_web)
+    if whole and total <= budget and len(whole_web) == len(web_pages):
+        mode = "whole document" if len(doc_ids) == 1 else "whole documents"
+        return whole + whole_web, mode + (" + web pages" if whole_web else "")
 
-    chunks = chunks_for(library, doc_ids)
+    doc_chunks = chunks_for(library, doc_ids)
+    chunks = doc_chunks + web
     if not chunks:
         return [], "search"
     rankings = [bm25_rank(question, chunks)]
@@ -210,8 +240,10 @@ def gather(library: Library, question: str, doc_ids: Sequence[str], *, context_t
             # per-document vector files concatenate into the same order.
             vectors: list[array] = []
             for doc_id in doc_ids:
-                own = [c for c in chunks if c.doc_id == doc_id]
+                own = [c for c in doc_chunks if c.doc_id == doc_id]
                 vectors.extend(vectors_for(library, doc_id, own, embed_model, embed))
+            # Web pages are few and change with every search: embedded fresh, not kept.
+            vectors.extend(embed_chunks(web, embed_model, embed))
             rankings.append(embedding_rank(question, chunks, vectors, embed_model, embed))
             mode = "keyword + meaning search"
         except Exception:  # meaning search is an improvement, never a requirement
@@ -220,20 +252,24 @@ def gather(library: Library, question: str, doc_ids: Sequence[str], *, context_t
     if not ranked:
         return [], mode
 
+    if web:
+        mode += " + web pages"
     chosen: list[Chunk] = []
     used = 0
+    web_used = 0
     for index, score in ranked:
         chunk = chunks[index]
         cost = len(chunk.text) + 40
-        if used + cost > budget:
+        if used + cost > budget or (chunk.url and web_used >= MAX_WEB_EXCERPTS):
             continue
+        web_used += bool(chunk.url)
         chunk.score = score
         chosen.append(chunk)
         used += cost
         if len(chosen) >= MAX_EXCERPTS:
             break
     # Reading order, not score order: a model follows a record better when
-    # page 12 comes before page 40.
+    # page 12 comes before page 40. Web pages after the documents.
     order = {doc_id: i for i, doc_id in enumerate(doc_ids)}
-    chosen.sort(key=lambda c: (order.get(c.doc_id, 0), c.page))
+    chosen.sort(key=lambda c: (bool(c.url), order.get(c.doc_id, 0), c.page))
     return chosen, mode
