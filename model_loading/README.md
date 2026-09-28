@@ -157,8 +157,18 @@ Send only `dist\ModelPortal.exe`, one file of about 20 MB. Email often blocks
    computer*, click **Download** next to `qwen2.5`. The first model downloaded
    is plugged in automatically.
 5. **Add documents.** On the **Documents** tab, drag in OCR'd PDFs or text files.
+   A bar shows the file going in, then the pages being read (page, percent,
+   about how long is left), with a **Stop** button. A large PDF takes a while:
+   a 358-page OCR'd file reads in about 12 seconds on a laptop, so thousands of
+   pages take minutes.
 6. **Ask.** On the **Ask** tab, tick the documents, type a question, and click
-   **Ask**.
+   **Ask**. The answer types out as it is written. Ask follow-ups in the same
+   chat ("what did she report after it?"): the last few questions and answers go
+   back to the model so it knows what "she" and "it" are, but every fact is
+   still quoted from the pages and checked. The **Model** box beside **Ask**
+   switches models mid-chat. **History** lists saved chats to reopen and
+   continue; **New chat** starts fresh. Chats are saved on this computer only,
+   in the `chats` folder next to `library`.
 
 A *Getting started* checklist on the Ask tab tracks these steps.
 

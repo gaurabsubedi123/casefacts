@@ -1,6 +1,6 @@
 import pytest
 
-from modelportal.answer import AskError, check, parse_reply, validate
+from modelportal.answer import AskError, check, history_block, parse_reply, partial_answer, search_text, validate
 from modelportal.documents import Library
 from modelportal.retrieve import Chunk, bm25_rank, gather
 
@@ -82,3 +82,17 @@ def test_bm25_prefers_the_matching_chunk():
     chunks = excerpts()
     ranked = bm25_rank("lumbar strain diagnosis", chunks)
     assert ranked[0][0] == 1
+
+
+def test_partial_answer_reads_an_unfinished_reply():
+    assert partial_answer('{"answer": "Seen on 07/06/2018 and said \\"it hurts') == 'Seen on 07/06/2018 and said "it hurts'
+    assert partial_answer('{"answer": "Two lines\\') == "Two lines"
+    assert partial_answer('{"findings": [') == ""
+
+
+def test_follow_up_carries_the_conversation():
+    history = [{"question": "When was the accident?", "answer": "On 07/06/2018."}]
+    block = history_block(history)
+    assert "Q: When was the accident?" in block and "A: On 07/06/2018." in block
+    assert search_text("And the diagnosis?", history) == "When was the accident? And the diagnosis?"
+    assert search_text("First question", []) == "First question"

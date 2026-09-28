@@ -135,7 +135,7 @@ function renderSetup() {
   const steps = [
     [up, up ? "Ollama is running." : "Install or start Ollama (see the message at the top)."],
     [hasModel, 'Download a model on the <a href="#" data-goto="models">Models</a> tab — the <b>Recommended</b> list shows what runs well on this computer.'],
-    [plugged, "Plug a model in: pick it in the <b>Model</b> box at the top right."],
+    [plugged, "Plug a model in: pick it in a <b>Model</b> box, beside the Ask button or at the top right."],
     [hasDocs, 'Add OCR\'d PDFs or text files on the <a href="#" data-goto="documents">Documents</a> tab.'],
   ];
   $("#steps").innerHTML = steps.map(([done, text]) => `<li class="${done ? "done" : ""}">${text}</li>`).join("");
@@ -201,15 +201,21 @@ function chatModels() {
   return state.models.filter((m) => !m.embedding && !m.cloud);
 }
 
+// Two pickers, one choice: the one at the top of every tab and the one beside
+// the chat box. Changing either plugs the model in and moves the other.
 function renderModelPicker() {
-  const select = $("#active-model");
   const active = state.status?.active_model || "";
   const options = chatModels().map((m) => `<option value="${esc(m.name)}" ${m.name === active ? "selected" : ""}>${esc(m.name)}</option>`);
-  select.innerHTML = `<option value="">${options.length ? "choose a model" : "none downloaded"}</option>${options.join("")}`;
-  if (active && !chatModels().some((m) => m.name === active)) select.value = "";
+  $$(".model-select").forEach((select) => {
+    select.innerHTML = `<option value="">${options.length ? "choose a model" : "none downloaded"}</option>${options.join("")}`;
+    if (active && !chatModels().some((m) => m.name === active)) select.value = "";
+  });
 }
 
-$("#active-model").addEventListener("change", (e) => { if (e.target.value) useModel(e.target.value); });
+$$(".model-select").forEach((select) => select.addEventListener("change", (e) => {
+  $$(".model-select").forEach((other) => (other.value = e.target.value));
+  if (e.target.value) useModel(e.target.value);
+}));
 
 async function loadModels(quiet) {
   try {
@@ -261,8 +267,7 @@ $("#meaning-toggle").onchange = async (e) => { await api("/api/models/meaning", 
 
 async function useModel(name) {
   const pill = $("#ollama-pill");
-  const select = $("#active-model");
-  select.disabled = true;
+  $$(".model-select").forEach((s) => (s.disabled = true));
   pill.innerHTML = `<span class="spin"></span>Plugging in ${esc(name)}…`;
   pill.className = "pill";
   try {
@@ -275,7 +280,7 @@ async function useModel(name) {
   } catch (e) {
     setBanner(esc(e.message));
   } finally {
-    select.disabled = false;
+    $$(".model-select").forEach((s) => (s.disabled = false));
     await refreshStatus();
     await loadModels(true);
   }
@@ -531,28 +536,77 @@ function showAddErrors(errors) {
   $("#add-errors").innerHTML = errors.map((x) => `<div class="error"><b>${esc(x.name)}</b>: ${esc(x.error.replace(`${x.name}: `, ""))}</div>`).join("");
 }
 
+function fmtDuration(seconds) {
+  if (seconds < 60) return `${Math.max(5, Math.ceil(seconds / 5) * 5)} sec`;
+  const minutes = Math.round(seconds / 60);
+  return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+function readingProgress(title, done, total, detail, jobId) {
+  const pct = total ? Math.min(100, (100 * done) / total) : 0;
+  return `<div class="result">
+    <div class="result-head"><span><span class="spin"></span>${esc(title)}</span>
+      ${jobId ? '<button class="ghost small-btn" data-stop-add>Stop</button>' : ""}</div>
+    <div class="bar"><span style="width:${pct}%"></span></div>
+    <div class="model-sub">${esc(detail)}</div></div>`;
+}
+
+// fetch() cannot report how much of a request body has gone, and a big PDF
+// takes long enough to send that the page must show it moving.
+function sendForm(path, form, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", path);
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded);
+    xhr.onerror = () => reject(new Error("The portal is not responding. Is its window still open?"));
+    xhr.onload = () => {
+      let data = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* empty body */ }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(data);
+      const error = new Error(data.error || `${xhr.status} ${xhr.statusText}`);
+      error.data = data;
+      reject(error);
+    };
+    xhr.send(form);
+  });
+}
+
 async function upload(files) {
   showAddErrors([]);
   const progress = $("#add-progress");
   if (!files.length) { showAddErrors([{ name: "No file", error: "was given. Choose one or more OCR'd PDF or text files." }]); return; }
   const form = new FormData();
   files.forEach((f) => form.append("files", f, f.name));
-  progress.innerHTML = `<span class="spin"></span>Copying ${files.length} file(s) in…`;
+  const total = files.reduce((n, f) => n + f.size, 0);
+  progress.innerHTML = readingProgress(`Copying ${files.length} file(s) in`, 0, total, "");
   try {
-    const { job, rejected } = await api("/api/documents", { method: "POST", body: form });
+    const { job, rejected } = await sendForm("/api/documents", form, (sent) => {
+      progress.innerHTML = readingProgress(`Copying ${files.length} file(s) in`, sent, total,
+        `${fmtSize(sent) || "0 MB"} of ${fmtSize(total)}`);
+    });
     if (rejected?.length) showAddErrors(rejected);
     const done = await pollJob(job, (j) => {
       const p = j.progress;
-      if (p.phase) progress.innerHTML = `<span class="spin"></span>${esc(p.phase)} (file ${p.file} of ${p.files})${p.pages ? ` — page ${p.page} of ${p.pages}` : ""}`;
+      if (!p.phase) return;
+      const title = `${p.phase}${p.files > 1 ? ` (file ${p.file} of ${p.files})` : ""}`;
+      let detail = "Opening the file…";
+      if (p.pages) {
+        const left = p.seconds_left == null ? "working out the time left…" : `about ${fmtDuration(p.seconds_left)} left`;
+        detail = `Page ${p.page.toLocaleString()} of ${p.pages.toLocaleString()} · ${Math.floor((100 * p.page) / p.pages)}% · ${left}`;
+      }
+      progress.innerHTML = readingProgress(title, p.page, p.pages, detail, j.id);
+      const stop = $("[data-stop-add]", progress);
+      if (stop) stop.onclick = () => { stop.disabled = true; stop.textContent = "Stopping…"; api(`/api/jobs/${j.id}/stop`, { json: {} }); };
     });
     if (done.status === "error") throw new Error(done.error);
-    const r = done.result;
+    const r = done.result || { added: [], skipped: [] };
     const added = r.added.filter((d) => d.new).length;
     const again = r.added.length - added;
-    progress.innerHTML = r.added.length
+    const stopped = done.status === "stopped" ? '<div class="note">Stopped. The file that was being read was not added.</div>' : "";
+    progress.innerHTML = stopped + (r.added.length
       ? `<div class="okay">Added ${added} document(s)${again ? `; ${again} already in the library` : ""}.</div>` +
         r.added.filter((d) => d.warning).map((d) => `<div class="note"><b>${esc(d.name)}</b>: ${esc(d.warning)}</div>`).join("")
-      : "";
+      : "");
     showAddErrors(r.skipped);
     r.added.forEach((d) => state.selected.add(d.id));
     store.set("selectedDocs", [...state.selected]);
@@ -575,44 +629,82 @@ function askError(message) {
   box.hidden = !message;
 }
 
+// The open conversation: its id on the portal (null until the first question
+// is sent) and its questions with their checked answers.
+const chat = { id: null, title: "", turns: [] };
+
 async function askQuestion() {
   askError("");
-  const question = $("#question").value.trim();
+  const input = $("#question");
+  const question = input.value.trim();
   const model = $("#active-model").value;
   // The same checks the server makes, here so the message is instant.
   if (!state.docs.length) return askError("No document is attached. Add an OCR'd PDF or text file on the Documents tab first.");
   if (!state.selected.size) return askError("No document is selected. Tick at least one document above.");
-  if (!model) return askError("No model is plugged in. Choose one at the top right, or download one on the Models tab.");
+  if (!model) return askError("No model is plugged in. Choose one beside the Ask button, or download one on the Models tab.");
   if (!question) return askError("Type a question first.");
 
-  const button = $("#ask-btn");
   const progress = $("#ask-progress");
-  button.disabled = true;
-  $("#stop-btn").hidden = false;
+  setAsking(true);
+  input.value = "";
+  const pending = document.createElement("div");
+  pending.className = "turn";
+  pending.innerHTML = `<div class="bubble-q">${esc(question)}</div>
+    <div class="reply"><div class="model-tag">${esc(model)}</div><p class="answer-text typing"></p></div>`;
+  $("#thread-empty")?.remove();
+  $("#thread").append(pending);
+  pending.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  const live = $(".answer-text", pending);
   progress.innerHTML = '<span class="spin"></span>Starting…';
+  let failed = true;
   try {
-    const { job } = await api("/api/ask", { json: { question, model, documents: [...state.selected] } });
-    state.askJob = job;
-    const done = await pollJob(job, (j) => {
+    const started = await api("/api/ask", { json: { question, model, documents: [...state.selected], chat: chat.id } });
+    state.askJob = started.job;
+    if (!chat.id) {
+      chat.id = started.chat;
+      chat.title = question;
+      store.set("chatId", chat.id);
+      renderChatTitle();
+    }
+    const done = await pollJob(started.job, (j) => {
       const p = j.progress;
       let text = p.phase || "working";
       if (p.phase === "reading") text = `Reading ${p.excerpts} excerpt(s)`;
       if (p.phase === "thinking") text = "Thinking";
-      if (p.phase === "writing") text = "Writing the answer";
+      if (p.phase === "writing") text = p.partial ? "Writing the answer" : "Writing";
+      if (p.partial) live.textContent = p.partial;
       progress.innerHTML = `<span class="spin"></span>${esc(text)} · ${j.elapsed}s`;
-    }, 600);
-    if (done.status === "stopped") { progress.textContent = "Stopped."; return; }
+    }, 400);
+    if (done.status === "stopped") { progress.textContent = "Stopped. That question was not saved."; return; }
     if (done.status === "error") throw new Error(done.error);
     progress.textContent = "";
-    renderAnswer(done.result);
+    failed = false;
+    chat.turns.push({ question, result: done.result });
+    renderThread();
+    const last = $("#thread").lastElementChild;
+    last?.scrollIntoView({ block: "start", behavior: "smooth" });
+    if (done.result.findings[0]?.doc_id) openPage(done.result.findings[0]);
+    if (!$("#history").hidden) loadHistory();
   } catch (e) {
     progress.textContent = "";
     askError(e.message);
   } finally {
-    button.disabled = false;
-    $("#stop-btn").hidden = true;
+    if (failed) {
+      pending.remove();
+      if (!input.value) input.value = question; // give the question back to fix or resend
+      if (!chat.turns.length) renderThread();
+    }
+    setAsking(false);
     state.askJob = null;
   }
+}
+
+function setAsking(on) {
+  $("#ask-btn").disabled = on;
+  $("#stop-btn").hidden = !on;
+  // Switching chats mid-answer would file the answer under the wrong one.
+  $("#new-chat-btn").disabled = on;
+  $$("[data-chat]").forEach((b) => (b.disabled = on));
 }
 
 const VERDICT_HELP = {
@@ -623,29 +715,122 @@ const VERDICT_HELP = {
   unverified: "This quote was not found in the pages the model was given. Treat it as unsupported.",
 };
 
-function renderAnswer(r) {
-  const box = $("#answer");
-  box.hidden = false;
+function answerHTML(r, t) {
   const findings = r.findings.map((f, i) => `
     <div class="finding">
       <span class="badge ${esc(f.verdict.replace(" ", "-"))}" title="${esc(VERDICT_HELP[f.verdict] || "")}">${esc(f.verdict)}</span>
       <p class="statement">${esc(f.statement)}</p>
       ${f.quote ? `<blockquote>“${esc(f.quote)}”</blockquote>` : ""}
-      ${f.doc_id ? `<button class="cite" data-f="${i}">${esc(f.title)} — page ${f.page}</button>` : ""}
+      ${f.doc_id ? `<button class="cite" data-t="${t}" data-f="${i}">${esc(f.title)} — page ${f.page}</button>` : ""}
     </div>`).join("");
-  const meta = [r.model, r.mode, r.seconds !== undefined ? `${r.seconds}s` : "",
+  const meta = [r.mode, r.seconds !== undefined ? `${r.seconds}s` : "",
     r.findings.length ? `${r.verified} of ${r.findings.length} findings checked against the page` : ""].filter(Boolean).map(esc).join(" · ");
-  box.innerHTML = `
-    <h2>Answer</h2>
+  return `
+    <div class="model-tag">${esc(r.model)}</div>
     ${r.answer ? `<p class="answer-text">${esc(r.answer)}</p>` : '<p class="muted">No answer found in the selected documents.</p>'}
     <div class="meta">${meta}</div>
     ${r.missing ? `<div class="note"><b>Not in the documents:</b> ${esc(r.missing)}</div>` : ""}
     ${r.warnings.map((w) => `<div class="note">${esc(w)}</div>`).join("")}
     ${findings}
     ${r.thinking ? `<details class="thinking"><summary>The model's reasoning</summary><pre>${esc(r.thinking)}</pre></details>` : ""}`;
-  $$("[data-f]", box).forEach((b) => (b.onclick = () => openPage(r.findings[Number(b.dataset.f)])));
-  if (r.findings[0]?.doc_id) openPage(r.findings[0]);
 }
+
+function renderThread() {
+  const thread = $("#thread");
+  if (!chat.turns.length) {
+    thread.innerHTML = `<p class="muted small thread-empty" id="thread-empty">Ask a question about the selected documents.
+      Follow-up questions remember what was asked before, and every answer is saved in <b>History</b>.</p>`;
+    return;
+  }
+  thread.innerHTML = chat.turns.map((turn, t) => `
+    <div class="turn">
+      <div class="bubble-q">${esc(turn.question)}</div>
+      <div class="reply">${answerHTML(turn.result, t)}</div>
+    </div>`).join("");
+  $$("[data-f]", thread).forEach((b) => (b.onclick = () => openPage(chat.turns[Number(b.dataset.t)].result.findings[Number(b.dataset.f)])));
+}
+
+function renderChatTitle() {
+  const title = chat.title ? chat.title.replace(/\s+/g, " ") : "New chat";
+  $("#chat-title").textContent = title.length > 60 ? `${title.slice(0, 59)}…` : title;
+  $("#chat-title").title = chat.title || "";
+}
+
+function newChat() {
+  chat.id = null;
+  chat.title = "";
+  chat.turns = [];
+  store.set("chatId", null);
+  renderChatTitle();
+  renderThread();
+  askError("");
+  $("#ask-progress").textContent = "";
+  $$(".history-item").forEach((row) => row.classList.remove("on"));
+  $("#question").focus();
+}
+
+async function openChat(id, quiet) {
+  try {
+    const saved = await api(`/api/chats/${id}`);
+    chat.id = saved.id;
+    chat.title = saved.title;
+    chat.turns = saved.turns;
+    store.set("chatId", chat.id);
+    // Carry on with the documents the chat was about, those still in the library.
+    const still = saved.documents.filter((d) => state.docs.some((doc) => doc.id === d));
+    if (still.length) {
+      state.selected = new Set(still);
+      store.set("selectedDocs", still);
+      renderAskDocs();
+    }
+    renderChatTitle();
+    renderThread();
+    askError("");
+    $$(".history-item").forEach((row) => row.classList.toggle("on", row.dataset.id === id));
+  } catch (e) {
+    if (quiet) { store.set("chatId", null); return; }
+    askError(e.message);
+  }
+}
+
+function fmtWhen(seconds) {
+  const when = new Date(seconds * 1000);
+  const today = new Date();
+  if (when.toDateString() === today.toDateString()) return when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  return when.toLocaleDateString([], { month: "short", day: "numeric", year: when.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+}
+
+async function loadHistory() {
+  const box = $("#history");
+  try {
+    const { chats } = await api("/api/chats");
+    box.innerHTML = chats.length ? chats.map((c) => `
+      <div class="history-item ${c.id === chat.id ? "on" : ""}" data-id="${esc(c.id)}">
+        <button class="history-open" data-chat="${esc(c.id)}" title="${esc(c.title)}">
+          <b>${esc(c.title)}</b><span class="muted small">${esc(fmtWhen(c.updated))} · ${c.questions} question${c.questions === 1 ? "" : "s"}</span>
+        </button>
+        <button class="ghost small-btn" data-forget="${esc(c.id)}" title="Delete this chat">Delete</button>
+      </div>`).join("") : '<p class="muted small" style="margin:10px">No saved chats yet. Ask a question and it appears here.</p>';
+    $$("[data-chat]", box).forEach((b) => (b.onclick = () => openChat(b.dataset.chat)));
+    $$("[data-forget]", box).forEach((b) => (b.onclick = async () => {
+      if (!confirm("Delete this chat from History? The documents stay in the library.")) return;
+      await api(`/api/chats/${b.dataset.forget}`, { method: "DELETE" });
+      if (b.dataset.forget === chat.id) newChat();
+      loadHistory();
+    }));
+    if (state.askJob) setAsking(true);
+  } catch (e) {
+    box.innerHTML = `<div class="error">${esc(e.message)}</div>`;
+  }
+}
+
+$("#new-chat-btn").onclick = newChat;
+$("#history-btn").onclick = () => {
+  const box = $("#history");
+  box.hidden = !box.hidden;
+  $("#history-btn").setAttribute("aria-expanded", String(!box.hidden));
+  if (!box.hidden) loadHistory();
+};
 
 // ---------------------------------------------------------------- viewer
 
@@ -705,5 +890,8 @@ async function openPage(f) {
   showTab(["ask", "models", "documents"].includes(fromHash) ? fromHash : store.get("tab", "ask"));
   await refreshStatus();
   await loadDocs();
+  renderThread();
+  const lastChat = store.get("chatId", null);
+  if (lastChat) await openChat(lastChat, true);
   setInterval(refreshStatus, 8000);
 })();

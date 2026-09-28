@@ -311,11 +311,12 @@ class Ollama:
             if message.get("content"):
                 content.append(message["content"])
             pieces += 1
-            if on_progress and pieces % 8 == 0:
+            if on_progress and pieces % 4 == 0:
                 on_progress({
                     "phase": "writing" if content else ("thinking" if thinking else "reading"),
                     "tokens": pieces,
                     "seconds": round(time.monotonic() - started, 1),
+                    "text": "".join(content),
                 })
             if event.get("done"):
                 final = event

@@ -15,6 +15,7 @@ import os
 import platform
 import tempfile
 import threading
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -23,7 +24,8 @@ from flask import Flask, Response, abort, jsonify, render_template, request, sen
 
 from . import __version__, catalog, hardware
 from .answer import AskError, ask, validate
-from .documents import SUPPORTED, Library, NotOCRed, empty_page_numbers
+from .chats import Chats, history_of
+from .documents import SUPPORTED, Cancelled, Library, NotOCRed, empty_page_numbers
 from .jobs import Job, Jobs
 from .ollama import DOWNLOAD_URL, Ollama, OllamaError, Stopped, find_binary
 from .paths import data_dir, resource_dir
@@ -67,6 +69,7 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
     app.config["MAX_CONTENT_LENGTH"] = 2 * 1024**3
     client = client or Ollama()
     library = library or Library()
+    chats = Chats(library.root.parent / "chats")
     jobs = Jobs()
     settings = Settings(data_dir() / "settings.json")
     incoming = data_dir() / "incoming"
@@ -417,9 +420,22 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
             for number, (temp, name) in enumerate(staged, start=1):
                 if job.stopping:
                     break
-                job.update({"phase": f"Reading {name}", "file": number, "files": len(staged), "page": 0, "pages": 0})
+                job.update({"phase": f"Reading {name}", "file": number, "files": len(staged),
+                            "page": 0, "pages": 0, "seconds_left": None})
+                started = time.monotonic()
+
+                def on_page(page: int, pages: int) -> None:
+                    if job.stopping:
+                        raise Cancelled()
+                    # Pages take about as long as each other, so the pace so
+                    # far is a fair guess at the rest. Too few pages is noise.
+                    left = None
+                    if page >= 3:
+                        left = round((time.monotonic() - started) / page * (pages - page))
+                    job.update({"page": page, "pages": pages, "seconds_left": left})
+
                 try:
-                    doc, new = library.add(temp, name, lambda p, t: job.update({"page": p, "pages": t}))
+                    doc, new = library.add(temp, name, on_page)
                     entry = doc.to_dict()
                     entry["new"] = new
                     empty = empty_page_numbers(library.pages(doc.id))
@@ -427,10 +443,14 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
                         shown = ", ".join(map(str, empty[:12])) + ("…" if len(empty) > 12 else "")
                         entry["warning"] = f"{len(empty)} page(s) have no OCR text and cannot be cited: {shown}"
                     added.append(entry)
+                except Cancelled:
+                    break
                 except ValueError as exc:
                     skipped.append({"name": name, "error": str(exc)})
                 finally:
                     temp.unlink(missing_ok=True)
+            for temp, _ in staged:  # the ones never reached, after a stop
+                temp.unlink(missing_ok=True)
             return {"added": added, "skipped": skipped}
 
         job = jobs.start("add", f"Add {len(staged)} file(s)", work)
@@ -467,6 +487,7 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
         doc_ids = [str(d) for d in data.get("documents") or []]
         model = str(data.get("model") or settings.get("active_model") or "")
         validate(library, question, doc_ids, model)
+        chat = chats.get(str(data.get("chat") or ""))
         if is_cloud(model):
             raise AskError("That is a cloud model; your documents would leave this computer.")
         if jobs.active("load"):
@@ -477,12 +498,37 @@ def create_app(client: Ollama | None = None, library: Library | None = None) -> 
             shape = client.show(model).get("model_info") or {}
             context = hardware.context_for(size, shape, hardware.detect())["context"]
 
+        if chat is None:
+            chat = chats.create(question)
+        history = history_of(chat)
+
         def work(job: Job) -> dict[str, Any]:
-            return ask(client, library, question, doc_ids, model, context,
-                       embed_model=embed_model(), on_progress=job.update, should_stop=lambda: job.stopping)
+            result = ask(client, library, question, doc_ids, model, context, embed_model=embed_model(),
+                         history=history, on_progress=job.update, should_stop=lambda: job.stopping)
+            # Saved only once answered: a stopped or failed question is not part of the chat.
+            chats.add_turn(chat["id"], question.strip(), result, doc_ids)
+            return result
 
         job = jobs.start("ask", question[:80], work)
-        return jsonify(job=job.id)
+        return jsonify(job=job.id, chat=chat["id"])
+
+    # ------------------------------------------------------------- chats
+
+    @app.get("/api/chats")
+    def chat_list():
+        # A chat whose first question was stopped has nothing in it to show.
+        return jsonify(chats=[c for c in chats.all() if c["questions"]])
+
+    @app.get("/api/chats/<chat_id>")
+    def chat_get(chat_id: str):
+        chat = chats.get(chat_id)
+        if not chat:
+            return jsonify(error="That chat is no longer in History."), 404
+        return jsonify(chat)
+
+    @app.delete("/api/chats/<chat_id>")
+    def chat_delete(chat_id: str):
+        return jsonify(ok=chats.delete(chat_id))
 
     # -------------------------------------------------------------- jobs
 

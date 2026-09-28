@@ -39,6 +39,11 @@ REPLY_TOKENS = 1600
 THINKING_REPLY_TOKENS = 4500
 SYSTEM_TOKENS = 450
 
+# How much of the conversation so far goes back in with a follow-up. Enough to
+# know who "he" or "that visit" is; not so much it crowds out the pages.
+HISTORY_TURNS = 4
+HISTORY_ANSWER_CHARS = 600
+
 SYSTEM_PROMPT = """You answer questions about documents using only what they say.
 
 You are given numbered excerpts from the pages of one or more documents. Many \
@@ -54,18 +59,23 @@ it appears, including OCR errors. Do not tidy up a quote.
 3. Cite the number of the excerpt you quoted. Never cite one you did not quote.
 4. Any date, name, number or amount you state must appear in your quote.
 5. If excerpts disagree, report both and say that they disagree.
+6. You may be shown earlier questions and answers from this conversation. Use \
+them only to understand what a follow-up refers to ("he", "that visit", "the \
+second one"). They are not evidence: every fact still comes from the excerpts.
 
 Reply with JSON only, in exactly this shape:
 
 {
+  "answer": "two to four sentences answering the question from what the excerpts say",
   "findings": [
     {"statement": "one fact, in plain English",
      "quote": "the exact words from the excerpt that establish it",
      "excerpt": 3}
   ],
-  "answer": "two to four sentences answering the question from the findings",
   "missing": "what the question asked for that the excerpts do not contain, or empty"
 }
+
+Every fact in the answer must be backed by one of the findings you list after it.
 
 If nothing in the excerpts is relevant, return an empty findings list, an empty \
 answer, and say what is missing."""
@@ -169,6 +179,50 @@ def build_context(excerpts: Sequence[Chunk]) -> str:
     )
 
 
+PARTIAL_ANSWER = re.compile(r'"answer"\s*:\s*"((?:[^"\\]|\\.)*)')
+
+
+def partial_answer(text: str) -> str:
+    """The answer so far, out of a reply that is still being written.
+
+    The reply is JSON that is not finished yet, so it cannot be parsed; the
+    answer string is picked out as far as it goes and its escapes undone.
+    """
+    match = PARTIAL_ANSWER.search(text)
+    if not match:
+        return ""
+    raw = match.group(1)
+    if raw.endswith("\\") and not raw.endswith("\\\\"):
+        raw = raw[:-1]  # half an escape: wait for the rest
+    try:
+        return json.loads(f'"{raw}"')
+    except ValueError:
+        return raw.replace('\\"', '"').replace("\\n", "\n")
+
+
+def history_block(history: Sequence[dict[str, str]]) -> str:
+    """Earlier turns, as plain text in the prompt.
+
+    Not as chat messages: earlier answers are prose, and a model shown its own
+    prose replies tends to drop the JSON shape it was asked for.
+    """
+    lines = []
+    for turn in list(history)[-HISTORY_TURNS:]:
+        answer = " ".join((turn.get("answer") or "(no answer found)").split())
+        if len(answer) > HISTORY_ANSWER_CHARS:
+            answer = answer[:HISTORY_ANSWER_CHARS - 1] + "…"
+        lines.append(f"Q: {' '.join(turn['question'].split())}\nA: {answer}")
+    return "\n\n".join(lines)
+
+
+def search_text(question: str, history: Sequence[dict[str, str]]) -> str:
+    """What to look for in the pages. A follow-up such as "and the second
+    visit?" shares few words with the pages on its own, so the last question
+    before it goes in too."""
+    earlier = [t["question"] for t in list(history)[-1:]]
+    return " ".join(earlier + [question])
+
+
 def parse_reply(text: str) -> tuple[list[dict[str, Any]], str, str]:
     candidate = text.strip()
     fenced = re.search(r"```(?:json)?\s*(.+?)```", candidate, re.DOTALL)
@@ -232,6 +286,7 @@ def ask(
     context_tokens: int,
     *,
     embed_model: str | None = None,
+    history: Sequence[dict[str, str]] = (),
     on_progress: Callable[[dict[str, Any]], None] = lambda _: None,
     should_stop: Callable[[], bool] = lambda: False,
 ) -> dict[str, Any]:
@@ -240,11 +295,12 @@ def ask(
 
     capabilities = client.capabilities(model)
     thinking = "thinking" in capabilities
-    reserve = SYSTEM_TOKENS + (THINKING_REPLY_TOKENS if thinking else REPLY_TOKENS)
+    earlier = history_block(history)
+    reserve = SYSTEM_TOKENS + (THINKING_REPLY_TOKENS if thinking else REPLY_TOKENS) + len(earlier) // 3
 
     on_progress({"phase": "finding pages"})
     excerpts, mode = gather(
-        library, question, [d.id for d in readable],
+        library, search_text(question, history), [d.id for d in readable],
         context_tokens=context_tokens, reserve_tokens=reserve,
         embed_model=embed_model, embed=client.embed if embed_model else None,
         progress=lambda message: on_progress({"phase": message}),
@@ -261,9 +317,19 @@ def ask(
         )
         return result
 
-    user = (f"Question: {question}\n\nExcerpts:\n\n{build_context(excerpts)}\n\n"
+    user = (f"Earlier in this conversation:\n\n{earlier}\n\n" if earlier else "") + (
+            f"Question: {question}\n\nExcerpts:\n\n{build_context(excerpts)}\n\n"
             "Answer the question using only these excerpts, in the JSON shape you were given.")
     on_progress({"phase": "reading", "excerpts": len(excerpts)})
+
+    def relay(progress: dict[str, Any]) -> None:
+        text = progress.pop("text", "")
+        # Reasoning left inline may draft the JSON too; only what follows it counts.
+        if "<think>" in text:
+            text = text.split("</think>", 1)[1] if "</think>" in text else ""
+        progress["partial"] = partial_answer(text)
+        on_progress(progress)
+
     reply = client.chat(
         model,
         [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user}],
@@ -272,7 +338,7 @@ def ask(
         # A JSON grammar and free reasoning fight each other; reasoning models
         # are asked for JSON in words and parsed leniently instead.
         json_format=not thinking,
-        on_progress=on_progress,
+        on_progress=relay,
         should_stop=should_stop,
     )
     findings_raw, answer_text, missing_text = parse_reply(reply["text"])

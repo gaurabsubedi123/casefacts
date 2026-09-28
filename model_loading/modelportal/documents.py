@@ -75,6 +75,8 @@ def pdf_pages(path: Path, progress: Callable[[int, int], None] | None = None) ->
 
     reader = PdfReader(str(path))
     total = len(reader.pages)
+    if progress:
+        progress(0, total)
     pages: list[str] = []
     for number, page in enumerate(reader.pages, start=1):
         try:
@@ -82,7 +84,7 @@ def pdf_pages(path: Path, progress: Callable[[int, int], None] | None = None) ->
         except Exception:  # a single malformed page must not lose the document
             text = ""
         pages.append(text)
-        if progress and (number % 5 == 0 or number == total):
+        if progress:
             progress(number, total)
     return pages
 
@@ -122,6 +124,10 @@ def read_pages(path: Path, progress: Callable[[int, int], None] | None = None) -
 
 
 # ---------------------------------------------------------------- library
+
+
+class Cancelled(Exception):
+    """Raised by a progress callback to stop reading a file part-way."""
 
 
 class NotOCRed(ValueError):
@@ -209,6 +215,9 @@ class Library:
         shutil.copyfile(source, stored)
         try:
             pages = read_pages(stored, progress)
+        except Cancelled:
+            stored.unlink(missing_ok=True)
+            raise
         except Exception as exc:
             stored.unlink(missing_ok=True)
             raise ValueError(f"{name}: could not be read ({exc})") from exc

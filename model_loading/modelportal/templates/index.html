@@ -19,7 +19,7 @@
       <span id="machine-pill" class="pill muted" title="">Checking this computer…</span>
       <label class="model-pick">
         <span class="muted small">Model</span>
-        <select id="active-model"><option value="">none plugged in</option></select>
+        <select id="active-model" class="model-select"><option value="">none plugged in</option></select>
       </label>
     </div>
   </header>
@@ -45,19 +45,30 @@
         </p>
       </div>
 
-      <div class="card">
-        <form id="ask-form">
+      <div class="card" id="chat-card">
+        <div class="card-head">
+          <h2 id="chat-title">New chat</h2>
+          <div class="row tight">
+            <button type="button" class="ghost small-btn" id="history-btn" aria-expanded="false">History</button>
+            <button type="button" class="ghost small-btn" id="new-chat-btn">New chat</button>
+          </div>
+        </div>
+        <div id="history" class="history" hidden></div>
+        <div id="thread" class="thread"></div>
+        <form id="ask-form" class="composer">
           <textarea id="question" rows="3" placeholder="Ask a question about the selected documents…"></textarea>
           <div class="row">
             <button type="submit" id="ask-btn" class="primary">Ask</button>
             <button type="button" id="stop-btn" class="ghost" hidden>Stop</button>
+            <label class="model-pick small" title="The model that answers. Switch any time; the chat carries on.">
+              <span class="muted">Model</span>
+              <select id="chat-model" class="model-select"><option value="">none plugged in</option></select>
+            </label>
             <span id="ask-progress" class="muted small"></span>
           </div>
         </form>
         <div id="ask-error" class="error" hidden></div>
       </div>
-
-      <div id="answer" class="card" hidden></div>
     </section>
 
     <aside class="ask-right card" id="viewer">
